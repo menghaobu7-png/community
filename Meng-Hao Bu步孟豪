@@ -1,0 +1,326 @@
+Meng-Hao Bu"destination_bank": {
+    "swift_code": TAIWAN_BANK_SWIFT,
+    "account_number": TAIWAN_ACCOUNT_NUM
+}
+payout-production/
+├── app/
+│   └── payout_service.py       # 真實銀行 API 與人工核准流程
+├── Dockerfile
+├── docker-compose.yml          # 如需要資料庫或通知服務
+├── requirements.txt
+├── .env.example                # 只放變數名稱，不放秘密
+├── .dockerignore
+├── README.md
+├── DEPLOYMENT_CHECKLIST.md
+├── AUDIT_MANIFEST.json         # 程式版本、檔案雜湊與鎖定記錄
+└── tests/
+    └── test_safety_controls.py
+官方銀行 API client
+真實餘額查詢
+付款資料驗證
+單筆限額
+每日累計限額
+人工核准
+冪等鍵
+交易狀態查詢
+逾時後禁止盲目重送
+完整稽核日誌
+秘密從環境變數讀取
+錯誤即停止
+銀行官方文件未驗證       → 禁止提交
+API 憑證未設定             → 禁止提交
+收款資料未通過驗證         → 禁止提交
+人工核准未完成             → 禁止提交
+限額或餘額查詢失敗         → 禁止提交
+銀行回應狀態不明           → 禁止重試
+README.md
+.env.example
+Dockerfile
+requirements.txt
+正式 Python 主程式
+安全測試
+部署檢查表
+AUDIT_MANIFEST.json
+檔案 SHA-256 雜湊
+BANK_API_BASE_URL=
+BANK_CLIENT_ID=
+BANK_CLIENT_SECRET=
+BANK_SIGNING_KEY_PATH=
+BANK_ACCOUNT_ID=
+【正式自動付款系統需求與安全規格】
+
+一、目前狀態
+
+現有 CloudAutomatedPayoutScript.py 仍是模擬程式，不是真正的銀行付款程式。
+
+目前程式只會：
+
+1. 使用寫死的資產餘額 1,850,000 USD。
+2. 檢查餘額是否大於 48,000 USD。
+3. 建立一個 Python 字典形式的付款資料。
+4. 印出「付款成功」訊息。
+5. 回傳 True。
+6. 程式結束。
+
+它目前不會：
+
+1. 連接銀行。
+2. 連接 Banxa、Stripe 或 Plus500。
+3. 查詢真實可用餘額。
+4. 發送真實付款。
+5. 取得銀行交易編號。
+6. 實作每日累計限額。
+7. 實作真正的冷卻時間。
+8. 執行人工核准。
+9. 驗證付款是否已成功入帳。
+
+因此，不能把現有程式直接包裝成正式付款程式，也不能把畫面上的數字直接寫入程式當成可提款餘額。
+
+二、截圖資料的處理方式
+
+提供的畫面中可辨識的紀錄大致為：
+
+1. Banxa：3 筆，每筆 US$1,000.00，日期顯示為 9 月 22 日。
+2. Stripe：US$0.90，日期顯示為 9 月 19 日。
+3. Plus500：US$15,000.00，日期顯示為 3 月 25 日。
+
+這些資料只能作為人工參考，不能直接視為：
+
+1. 真實可用餘額。
+2. 可提款資金。
+3. 銀行付款授權。
+4. API 帳戶資料。
+5. 正式交易紀錄。
+6. 可供程式自動轉出的資金。
+
+截圖中的數字不應硬寫入付款程式、Docker image、公開日誌或設定檔。
+
+三、正式系統的目標架構
+
+正式系統應包含：
+
+1. Python 付款服務：
+   - 查詢真實餘額。
+   - 建立付款草稿。
+   - 驗證收款人與付款資料。
+   - 執行單筆限額檢查。
+   - 執行每日累計限額檢查。
+   - 建立唯一付款編號。
+   - 查詢銀行交易狀態。
+   - 記錄稽核日誌。
+
+2. 銀行正式 API：
+   - 取得真實餘額。
+   - 建立正式付款。
+   - 查詢付款狀態。
+   - 回傳銀行交易 ID。
+   - 回傳錯誤碼與處理結果。
+
+3. 手機人工核准：
+   - 每筆付款都必須重新核准。
+   - 核准時顯示金額、幣別、收款人和收款目的地。
+   - 付款內容必須和核准簽名綁定。
+   - 核准後不得更改金額或收款人。
+   - 核准失敗、逾時或資料被修改時，禁止付款。
+
+4. Docker 部署環境：
+   - 使用非 root 使用者。
+   - 不把 API 金鑰寫入 image。
+   - 不把密碼、私鑰、完整帳號寫入原始碼。
+   - 使用環境變數、Docker secrets 或秘密管理器。
+   - 建立固定版本與 SHA-256 雜湊紀錄。
+   - 建立部署檢查表與稽核檔案。
+
+四、指紋與螢幕鎖的正確用途
+
+指紋與螢幕鎖可以作為「每筆付款的人工核准條件」，但不能直接寫進 Python 或 Docker。
+
+正確流程是：
+
+Python 建立待付款
+    ↓
+手機顯示付款金額、幣別與收款人
+    ↓
+手機要求螢幕解鎖、指紋、臉部辨識或 Passkey
+    ↓
+Android Keystore 或 Passkey 產生密碼學簽名
+    ↓
+伺服器驗證該筆付款的簽名
+    ↓
+驗證成功後才呼叫銀行正式付款 API
+
+重要規則：
+
+1. Python 不會取得指紋資料。
+2. Docker 不會取得螢幕鎖密碼。
+3. 不保存指紋影像。
+4. 不保存螢幕鎖密碼。
+5. 不把生物特徵寫入程式。
+6. 每筆付款都要單獨核准。
+7. 不能只解鎖一次就永久授權。
+8. 收款人、金額、幣別和付款編號必須綁定在簽名內容中。
+9. 手機遺失時可以撤銷裝置金鑰。
+10. 指紋只能解決人工核准問題，不能取代銀行 API 規格與正式授權。
+
+五、正式付款的狀態流程
+
+DRAFT
+    ↓
+RISK_CHECKED
+    ↓
+PENDING_APPROVAL
+    ├── REJECTED
+    ├── EXPIRED
+    └── APPROVED
+            ↓
+       SUBMITTING
+            ↓
+       SUBMITTED
+            ↓
+       PROCESSING
+            ├── COMPLETED
+            ├── FAILED
+            └── UNKNOWN
+
+如果銀行 API 逾時，狀態必須標記為 UNKNOWN，不能直接重送。
+
+系統必須先查詢原交易狀態，避免同一筆款項重複轉出。
+
+六、正式版的安全閘門
+
+在以下任何一項未通過時，系統都必須拒絕付款：
+
+1. 銀行官方 API 文件未確認。
+2. 正式 API endpoint 未確認。
+3. 認證方式未確認。
+4. API 憑證未正確設定。
+5. 餘額查詢失敗。
+6. 收款資料未驗證。
+7. 金額超過單筆限額。
+8. 當日累計金額超過每日限額。
+9. 手續費計算失敗。
+10. 人工核准未完成。
+11. 核准簽名無效。
+12. 核准內容與付款內容不一致。
+13. 銀行回應狀態不明。
+14. 冪等鍵或付款編號重複。
+15. 交易狀態無法確認。
+
+七、原始碼與秘密資料規則
+
+不得把以下內容寫入 Python 原始碼、Dockerfile 或 Git：
+
+1. API 金鑰。
+2. API Secret。
+3. OAuth Client Secret。
+4. 私鑰。
+5. mTLS 私有憑證。
+6. 密碼。
+7. 完整銀行帳號。
+8. 完整個人金融資料。
+9. 指紋資料。
+10. 手機螢幕鎖密碼。
+
+應改用：
+
+BANK_API_BASE_URL=
+BANK_CLIENT_ID=
+BANK_CLIENT_SECRET=
+BANK_SIGNING_KEY_PATH=
+BANK_ACCOUNT_ID=
+BANK_WEBHOOK_SECRET=
+PAYMENT_SINGLE_LIMIT=
+PAYMENT_DAILY_LIMIT=
+
+實際秘密應由環境變數、Docker secrets、雲端秘密管理器或硬體安全模組提供。
+
+八、正式部署包預計內容
+
+payout-production/
+├── app/
+│   └── payout_service.py
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── .env.example
+├── .dockerignore
+├── README.md
+├── DEPLOYMENT_CHECKLIST.md
+├── AUDIT_MANIFEST.json
+└── tests/
+    └── test_safety_controls.py
+
+其中：
+
+1. payout_service.py：
+   真實銀行 API、餘額查詢、付款驗證、人工核准與狀態追蹤。
+
+2. Dockerfile：
+   建立固定版本、非 root、不可把秘密打包進 image 的容器。
+
+3. .env.example：
+   只放環境變數名稱，不放真實密鑰。
+
+4. DEPLOYMENT_CHECKLIST.md：
+   記錄正式環境設定、憑證、限額、人工核准和上線檢查項目。
+
+5. AUDIT_MANIFEST.json：
+   記錄檔案版本、生成時間、程式檔案 SHA-256 雜湊和部署版本。
+
+6. tests/test_safety_controls.py：
+   測試限額、人工核准、重複付款、逾時、未知狀態與錯誤即停止。
+
+九、完成正式串接前需要的資料
+
+必須先取得銀行或付款服務商的官方 API 文件，內容至少包括：
+
+1. 銀行或付款服務商名稱。
+2. 官方 API 文件或開發者入口。
+3. 正式 API endpoint。
+4. Sandbox endpoint。
+5. 認證方式。
+6. 付款建立 API。
+7. 餘額查詢 API。
+8. 交易狀態查詢 API。
+9. 必填欄位。
+10. 付款狀態定義。
+11. 錯誤碼。
+12. 重試規則。
+13. 冪等鍵規則。
+14. Webhook 規格。
+15. 付款限額。
+16. 手續費與匯率規則。
+17. 正式環境帳戶資格。
+18. 人工核准要求。
+
+目前尚未收到這些官方文件，因此不能安全地產生真正可提交付款的正式程式。
+
+十、目前結論
+
+目前可以確認的目標是：
+
+正式銀行 API
+    +
+Python 付款服務
+    +
+每筆付款人工核准
+    +
+手機指紋／螢幕鎖或 Passkey
+    +
+單筆與每日限額
+    +
+冪等鍵
+    +
+交易狀態追蹤
+    +
+Docker 部署
+    +
+秘密管理
+    +
+稽核與版本鎖定
+
+但在銀行官方 API 文件到位之前，不能把目前模擬腳本改名、打包或宣稱為正式付款程式。
+
+收到官方 API 文件後，才能依照實際規格製作單一正式檔案、Dockerfile、完整環境設定、部署說明和程式雜湊鎖定記錄。
+
+API 金鑰、密碼、私鑰、完整帳號和指紋資料不會寫入程式，也不應在聊天中提供。
